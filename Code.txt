@@ -1,0 +1,675 @@
+#include <SDL.h>            
+#include <SDL_image.h>      
+#include <SDL_ttf.h>        
+#include <SDL_mixer.h>      
+#include <iostream>         
+#include <vector>           
+#include <string>           
+#include <ctime>            
+#include <fstream>          
+#include <algorithm>        
+#include <functional>       
+
+const int chieu_rong = 980;
+const int chieu_cao = 700;
+const int chieu_cao_mat_dat = 100;
+const float trong_luc = 0.2f;
+const float luc_nhay = -6.0;
+const int khoang_cach_ong = 180;
+const int toc_do_ong = 5;
+const int chieu_rong_ong = 100;
+const int chieu_rong_chim = 50;
+const int chieu_cao_chim = 50;
+const int khoang_cach_tao_ong = 100;
+const int so_diem_cao_toi_da = 10;
+
+enum trang_thai_tro_choi {
+    menu,
+    huong_dan,
+    dang_choi,
+    tam_dung,
+    ket_thuc,
+    diem_cao
+};
+
+struct ong {
+    int x, vi_tri_khe_ho;
+    bool da_vuot_qua;
+};
+
+bool kiem_tra_va_cham(SDL_Rect a, SDL_Rect b) {
+    return SDL_HasIntersection(&a, &b);
+}
+
+SDL_Texture* tai_texture(SDL_Renderer* renderer, const std::string& duong_dan) {
+    SDL_Texture* texture = IMG_LoadTexture(renderer, duong_dan.c_str());
+    if (!texture)
+        std::cout << "Fail to load " << duong_dan << ": " << IMG_GetError() << std::endl;
+    return texture;
+}
+
+SDL_Texture* ve_van_ban(SDL_Renderer* renderer, TTF_Font* font, const std::string& van_ban, SDL_Color mau) {
+    SDL_Surface* surface = TTF_RenderText_Blended(font, van_ban.c_str(), mau);
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_FreeSurface(surface);
+    return texture;
+}
+
+void ve_diem_so(SDL_Renderer* renderer, TTF_Font* font, int diem_so, int diem_cao_nhat) {
+    SDL_Color mau_trang = { 255, 255, 255 };
+    SDL_Color mau_vang = { 255, 215, 0 };
+
+    std::string chuoi_diem = "Score:" + std::to_string(diem_so);
+    SDL_Texture* texture_diem = ve_van_ban(renderer, font, chuoi_diem, (diem_so > diem_cao_nhat) ? mau_vang : mau_trang);
+    if (texture_diem) {
+        int w, h;
+        SDL_QueryTexture(texture_diem, nullptr, nullptr, &w, &h);
+        SDL_Rect vi_tri = { 20, 20, w, h };
+        SDL_RenderCopy(renderer, texture_diem, nullptr, &vi_tri);
+        SDL_DestroyTexture(texture_diem);
+    }
+
+    std::string chuoi_diem_cao = "Highest Score:" + std::to_string(diem_cao_nhat);
+    SDL_Texture* texture_diem_cao = ve_van_ban(renderer, font, chuoi_diem_cao, mau_trang);
+    if (texture_diem_cao) {
+        int w, h;
+        SDL_QueryTexture(texture_diem_cao, nullptr, nullptr, &w, &h);
+        SDL_Rect vi_tri = { 20, 50, w, h };
+        SDL_RenderCopy(renderer, texture_diem_cao, nullptr, &vi_tri);
+        SDL_DestroyTexture(texture_diem_cao);
+    }
+
+    if (diem_so > diem_cao_nhat) {
+        std::string thong_bao_diem_cao = "New Highest Score!";
+        SDL_Texture* texture_thong_bao = ve_van_ban(renderer, font, thong_bao_diem_cao, mau_vang);
+        if (texture_thong_bao) {
+            int w, h;
+            SDL_QueryTexture(texture_thong_bao, nullptr, nullptr, &w, &h);
+            SDL_Rect vi_tri = { 20, 70 + diem_cao_nhat + 10, w, h };
+            SDL_RenderCopy(renderer, texture_thong_bao, nullptr, &vi_tri);
+            SDL_DestroyTexture(texture_thong_bao);
+        }
+    }
+}
+
+bool chuot_tren_vung(SDL_Rect vung, int chuot_x, int chuot_y) {
+    return chuot_x >= vung.x && chuot_x <= vung.x + vung.w && chuot_y >= vung.y && chuot_y <= vung.y + vung.h;
+}
+
+void ve_menu(SDL_Renderer* renderer, TTF_Font* font, int& lua_chon, int chuot_x, int chuot_y, bool& nhan_chuot, bool& dang_chay, trang_thai_tro_choi& trang_thai, Mix_Chunk* am_thanh_nhan) {
+    SDL_Color mau_trang = { 255, 255, 255 };
+    SDL_Color mau_do = { 255, 0, 0 };
+    SDL_Color mau_vang_cam = { 255, 165, 0 };
+    std::string tuy_chon[4] = { "Start", "How to play", "High Score", "Exit" };
+    SDL_Rect vung_nut[4];
+
+    lua_chon = -1;
+
+    for (int i = 0; i < 4; ++i) {
+        SDL_Color mau = mau_trang;
+        SDL_Texture* texture_van_ban = ve_van_ban(renderer, font, tuy_chon[i], mau);
+        int w, h;
+        SDL_QueryTexture(texture_van_ban, nullptr, nullptr, &w, &h);
+        SDL_Rect vi_tri = { chieu_rong / 2 - w / 2, chieu_cao / 2 + i * 60 - 30, w, h };
+        vung_nut[i] = vi_tri;
+
+        if (chuot_tren_vung(vi_tri, chuot_x, chuot_y)) {
+            mau = mau_vang_cam;
+            SDL_DestroyTexture(texture_van_ban);
+            texture_van_ban = ve_van_ban(renderer, font, tuy_chon[i], mau);
+            lua_chon = i;
+
+            if (nhan_chuot) {
+                Mix_PlayChannel(-1, am_thanh_nhan, 0);
+                if (i == 0) {
+                    trang_thai = dang_choi;
+                }
+                else if (i == 1) {
+                    trang_thai = huong_dan;
+                }
+                else if (i == 2) {
+                    trang_thai = diem_cao;
+                }
+                else {
+                    dang_chay = false;
+                }
+            }
+        }
+
+        SDL_RenderCopy(renderer, texture_van_ban, nullptr, &vi_tri);
+        SDL_DestroyTexture(texture_van_ban);
+    }
+
+    nhan_chuot = false;
+}
+
+void ve_huong_dan(SDL_Renderer* renderer, TTF_Font* font, SDL_Texture* nen_huong_dan, int chuot_x, int chuot_y, bool& nhan_chuot, trang_thai_tro_choi& trang_thai, Mix_Chunk* am_thanh_nhan) {
+    SDL_RenderCopy(renderer, nen_huong_dan, nullptr, nullptr);
+
+    SDL_Color mau_den = { 0, 0, 0 };
+    SDL_Color mau_vang_cam = { 255, 165, 0 };
+
+    SDL_Texture* tieu_de = ve_van_ban(renderer, font, "How to play", mau_den);
+    int w, h;
+    SDL_QueryTexture(tieu_de, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_tieu_de = { chieu_rong / 2 - w / 2, chieu_cao / 2 - 120, w, h };
+    SDL_RenderCopy(renderer, tieu_de, nullptr, &vi_tri_tieu_de);
+    SDL_DestroyTexture(tieu_de);
+
+    std::string huong_dan_1 = "Press Space to Jump";
+    SDL_Texture* texture_huong_dan_1 = ve_van_ban(renderer, font, huong_dan_1, mau_den);
+    SDL_QueryTexture(texture_huong_dan_1, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_huong_dan_1 = { chieu_rong / 2 - w / 2, chieu_cao / 2 - 40, w, h };
+    SDL_RenderCopy(renderer, texture_huong_dan_1, nullptr, &vi_tri_huong_dan_1);
+    SDL_DestroyTexture(texture_huong_dan_1);
+
+    std::string huong_dan_2 = "Press P to Pause";
+    SDL_Texture* texture_huong_dan_2 = ve_van_ban(renderer, font, huong_dan_2, mau_den);
+    SDL_QueryTexture(texture_huong_dan_2, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_huong_dan_2 = { chieu_rong / 2 - w / 2, chieu_cao / 2, w, h };
+    SDL_RenderCopy(renderer, texture_huong_dan_2, nullptr, &vi_tri_huong_dan_2);
+    SDL_DestroyTexture(texture_huong_dan_2);
+
+    SDL_Color mau_thoat = mau_den;
+    SDL_Texture* texture_thoat = ve_van_ban(renderer, font, "Exit", mau_thoat);
+    SDL_QueryTexture(texture_thoat, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_thoat = { chieu_rong / 2 - w / 2, chieu_cao / 2 + 50, w, h };
+
+    if (chuot_tren_vung(vi_tri_thoat, chuot_x, chuot_y)) {
+        mau_thoat = mau_vang_cam;
+        SDL_DestroyTexture(texture_thoat);
+        texture_thoat = ve_van_ban(renderer, font, "Exit", mau_thoat);
+        if (nhan_chuot) {
+            Mix_PlayChannel(-1, am_thanh_nhan, 0);
+            trang_thai = menu;
+        }
+    }
+
+    SDL_RenderCopy(renderer, texture_thoat, nullptr, &vi_tri_thoat);
+    SDL_DestroyTexture(texture_thoat);
+
+    nhan_chuot = false;
+}
+
+void ve_bang_diem_cao(SDL_Renderer* renderer, TTF_Font* font, const std::vector<int>& danh_sach_diem, SDL_Texture* nen, int chuot_x, int chuot_y, bool& nhan_chuot, trang_thai_tro_choi& trang_thai, Mix_Chunk* am_thanh_nhan) {
+    SDL_RenderCopy(renderer, nen, nullptr, nullptr);
+    SDL_Color mau_vang_nhat = { 255, 239, 150 };
+    SDL_Color mau_vang_cam = { 255, 165, 0 };
+
+    int x_offset = 200;
+    int y_offset = 325;
+
+    for (size_t i = 0; i < std::min(danh_sach_diem.size(), size_t(4)); ++i) {
+        std::string chuoi_diem = std::to_string(i + 1) + ".Score:" + std::to_string(danh_sach_diem[i]);
+        SDL_Texture* texture_diem = ve_van_ban(renderer, font, chuoi_diem, mau_vang_nhat);
+        int w, h;
+        SDL_QueryTexture(texture_diem, nullptr, nullptr, &w, &h);
+        SDL_Rect vi_tri = { x_offset, y_offset, w, h };
+        SDL_RenderCopy(renderer, texture_diem, nullptr, &vi_tri);
+        SDL_DestroyTexture(texture_diem);
+        y_offset += 45;
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 180);
+    int w, h;
+    SDL_Color mau_quay_lai = mau_vang_nhat;
+    SDL_Texture* texture_quay_lai = ve_van_ban(renderer, font, "Press Esc to back", mau_quay_lai);
+    SDL_QueryTexture(texture_quay_lai, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_quay_lai = { chieu_rong / 2 - w / 2, chieu_cao - h - 20, w, h };
+
+    if (chuot_tren_vung(vi_tri_quay_lai, chuot_x, chuot_y)) {
+        mau_quay_lai = mau_vang_cam;
+        SDL_DestroyTexture(texture_quay_lai);
+        texture_quay_lai = ve_van_ban(renderer, font, "Press Esc to back", mau_quay_lai);
+        if (nhan_chuot) {
+            Mix_PlayChannel(-1, am_thanh_nhan, 0);
+            trang_thai = menu;
+        }
+    }
+
+    SDL_RenderFillRect(renderer, &vi_tri_quay_lai);
+    SDL_RenderCopy(renderer, texture_quay_lai, nullptr, &vi_tri_quay_lai);
+    SDL_DestroyTexture(texture_quay_lai);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+    nhan_chuot = false;
+}
+
+void ve_ket_thuc_tro_choi(SDL_Renderer* renderer, TTF_Font* font, int diem_so, int chuot_x, int chuot_y, bool& nhan_chuot, trang_thai_tro_choi& trang_thai, bool& ket_thuc, float& vi_tri_chim_y, float& van_toc, std::vector<ong>& danh_sach_ong, int& dem_khung_hinh, SDL_Texture* nen_ket_thuc, Mix_Chunk* am_thanh_nhan, bool& tro_choi_bat_dau, SDL_Rect& vung_chim, int& diem_hien_tai) {
+    SDL_RenderCopy(renderer, nen_ket_thuc, nullptr, nullptr);
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 150);
+    SDL_Rect nen_phu = { (chieu_rong - 650) / 2, (chieu_cao - 400) / 2, 650, 400 };
+    SDL_RenderFillRect(renderer, &nen_phu);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+    SDL_Color mau_trang = { 255, 255, 255 };
+    SDL_Color mau_do = { 255, 0, 0 };
+    SDL_Color mau_vang_cam = { 255, 165, 0 };
+
+    SDL_Texture* tieu_de_ket_thuc = ve_van_ban(renderer, font, "Game Over", mau_do);
+    int w, h;
+    SDL_QueryTexture(tieu_de_ket_thuc, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_ket_thuc = { chieu_rong / 2 - w / 2, chieu_cao / 2 - 120, w, h };
+    SDL_RenderCopy(renderer, tieu_de_ket_thuc, nullptr, &vi_tri_ket_thuc);
+    SDL_DestroyTexture(tieu_de_ket_thuc);
+
+    std::string chuoi_diem = "Score:" + std::to_string(diem_so);
+    SDL_Texture* texture_diem = ve_van_ban(renderer, font, chuoi_diem, mau_trang);
+    SDL_QueryTexture(texture_diem, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_diem = { chieu_rong / 2 - w / 2, chieu_cao / 2 - 40, w, h };
+    SDL_RenderCopy(renderer, texture_diem, nullptr, &vi_tri_diem);
+    SDL_DestroyTexture(texture_diem);
+
+    SDL_Color mau_choi_lai = mau_trang;
+    SDL_Texture* texture_choi_lai = ve_van_ban(renderer, font, "Press Enter to Retry", mau_choi_lai);
+    SDL_QueryTexture(texture_choi_lai, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_choi_lai = { chieu_rong / 2 - w / 2, chieu_cao / 2 + 40, w, h };
+    if (chuot_tren_vung(vi_tri_choi_lai, chuot_x, chuot_y)) {
+        mau_choi_lai = mau_vang_cam;
+        SDL_DestroyTexture(texture_choi_lai);
+        texture_choi_lai = ve_van_ban(renderer, font, "Press Enter to Retry", mau_choi_lai);
+        if (nhan_chuot) {
+            Mix_PlayChannel(-1, am_thanh_nhan, 0);
+            vi_tri_chim_y = chieu_cao / 2 - 200;
+            vung_chim.y = static_cast<int>(vi_tri_chim_y);
+            van_toc = 0;
+            danh_sach_ong.clear();
+            diem_hien_tai = 0;
+            dem_khung_hinh = 0;
+            ket_thuc = false;
+            tro_choi_bat_dau = false;
+        }
+    }
+    SDL_RenderCopy(renderer, texture_choi_lai, nullptr, &vi_tri_choi_lai);
+    SDL_DestroyTexture(texture_choi_lai);
+
+    SDL_Color mau_quay_lai_menu = mau_trang;
+    SDL_Texture* texture_quay_lai_menu = ve_van_ban(renderer, font, "Press Esc to menu", mau_quay_lai_menu);
+    SDL_QueryTexture(texture_quay_lai_menu, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_quay_lai_menu = { chieu_rong / 2 - w / 2, chieu_cao / 2 + 90, w, h };
+    if (chuot_tren_vung(vi_tri_quay_lai_menu, chuot_x, chuot_y)) {
+        mau_quay_lai_menu = mau_vang_cam;
+        SDL_DestroyTexture(texture_quay_lai_menu);
+        texture_quay_lai_menu = ve_van_ban(renderer, font, "Press Esc to menu", mau_quay_lai_menu);
+        if (nhan_chuot) {
+            Mix_PlayChannel(-1, am_thanh_nhan, 0);
+            trang_thai = menu;
+            vi_tri_chim_y = chieu_cao / 2 - 200;
+            vung_chim.y = static_cast<int>(vi_tri_chim_y);
+            van_toc = 0;
+            danh_sach_ong.clear();
+            diem_hien_tai = 0;
+            dem_khung_hinh = 0;
+            ket_thuc = false;
+            tro_choi_bat_dau = false;
+        }
+    }
+    SDL_RenderCopy(renderer, texture_quay_lai_menu, nullptr, &vi_tri_quay_lai_menu);
+    SDL_DestroyTexture(texture_quay_lai_menu);
+
+    nhan_chuot = false;
+}
+
+void ve_man_hinh_tam_dung(SDL_Renderer* renderer, TTF_Font* font, int chuot_x, int chuot_y, bool& nhan_chuot, trang_thai_tro_choi& trang_thai, Mix_Chunk* am_thanh_nhan) {
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 150);
+    SDL_Rect nen_phu = { (chieu_rong - 650) / 2, (chieu_cao - 400) / 2, 650, 400 };
+    SDL_RenderFillRect(renderer, &nen_phu);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
+
+    SDL_Color mau_trang = { 255, 255, 255 };
+    SDL_Color mau_vang_cam = { 255, 165, 0 };
+
+    SDL_Texture* tieu_de_tam_dung = ve_van_ban(renderer, font, "Pause", mau_trang);
+    int w, h;
+    SDL_QueryTexture(tieu_de_tam_dung, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_tam_dung = { chieu_rong / 2 - w / 2, chieu_cao / 2 - 60, w, h };
+    SDL_RenderCopy(renderer, tieu_de_tam_dung, nullptr, &vi_tri_tam_dung);
+    SDL_DestroyTexture(tieu_de_tam_dung);
+
+    SDL_Color mau_tiep_tuc = mau_trang;
+    SDL_Texture* texture_tiep_tuc = ve_van_ban(renderer, font, "Press P to continue", mau_tiep_tuc);
+    SDL_QueryTexture(texture_tiep_tuc, nullptr, nullptr, &w, &h);
+    SDL_Rect vi_tri_tiep_tuc = { chieu_rong / 2 - w / 2, chieu_cao / 2, w, h };
+    if (chuot_tren_vung(vi_tri_tiep_tuc, chuot_x, chuot_y)) {
+        mau_tiep_tuc = mau_vang_cam;
+        SDL_DestroyTexture(texture_tiep_tuc);
+        texture_tiep_tuc = ve_van_ban(renderer, font, "Press P to continue", mau_tiep_tuc);
+        if (nhan_chuot) {
+            Mix_PlayChannel(-1, am_thanh_nhan, 0);
+            trang_thai = dang_choi;
+        }
+    }
+    SDL_RenderCopy(renderer, texture_tiep_tuc, nullptr, &vi_tri_tiep_tuc);
+    SDL_DestroyTexture(texture_tiep_tuc);
+
+    nhan_chuot = false;
+}
+
+void doc_diem_cao(std::vector<int>& danh_sach_diem, int& diem_cao_nhat) {
+    std::ifstream tep("diem_cao.txt");
+    int diem;
+    danh_sach_diem.clear();
+    while (tep >> diem) {
+        danh_sach_diem.push_back(diem);
+    }
+    if (!danh_sach_diem.empty()) {
+        diem_cao_nhat = *std::max_element(danh_sach_diem.begin(), danh_sach_diem.end());
+    }
+    else {
+        diem_cao_nhat = 0;
+    }
+    tep.close();
+}
+
+void luu_diem_cao(const std::vector<int>& danh_sach_diem) {
+    std::ofstream tep("diem_cao.txt");
+    for (int diem : danh_sach_diem) {
+        tep << diem << "\n";
+    }
+    tep.close();
+}
+
+void them_diem(std::vector<int>& danh_sach_diem, int diem, int& diem_cao_nhat) {
+    danh_sach_diem.push_back(diem);
+    std::sort(danh_sach_diem.begin(), danh_sach_diem.end(), std::greater<int>());
+    if (danh_sach_diem.size() > so_diem_cao_toi_da)
+        danh_sach_diem.pop_back();
+    diem_cao_nhat = danh_sach_diem.empty() ? 0 : danh_sach_diem[0];
+}
+
+int main(int argc, char* argv[]) {
+    srand(static_cast<unsigned>(time(nullptr)));
+
+    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO);
+    IMG_Init(IMG_INIT_PNG);
+    TTF_Init();
+    Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048);
+
+    SDL_Window* cua_so = SDL_CreateWindow("Flappy Bird SDL2", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, chieu_rong, chieu_cao, 0);
+    SDL_Renderer* renderer = SDL_CreateRenderer(cua_so, -1, SDL_RENDERER_ACCELERATED);
+
+    SDL_Texture* texture_nen_tro_choi = tai_texture(renderer, "assets/bg.jpg");
+    SDL_Texture* texture_nen_menu = tai_texture(renderer, "assets/menu_bg.jpg");
+    SDL_Texture* texture_nen_huong_dan = tai_texture(renderer, "assets/htw_bg.jpg");
+    SDL_Texture* texture_ong = tai_texture(renderer, "assets/anh2.jpg");
+    SDL_Texture* texture_chim = tai_texture(renderer, "assets/anh1.png");
+    SDL_Texture* texture_nen_diem_cao = tai_texture(renderer, "assets/high_bg.jpg");
+    SDL_Texture* texture_nen_ket_thuc = tai_texture(renderer, "assets/gameover_bg.jpg");
+
+    TTF_Font* font = TTF_OpenFont("assets/font.ttf", 25);
+    Mix_Chunk* am_thanh_nhay = Mix_LoadWAV("assets/jump.wav");
+    Mix_Chunk* am_thanh_va_cham = Mix_LoadWAV("assets/hit.wav");
+    Mix_Chunk* am_thanh_ghi_diem = Mix_LoadWAV("assets/point.mp3");
+    Mix_Chunk* am_thanh_nhan_nut = Mix_LoadWAV("assets/click.mp3");
+
+    SDL_Rect vung_chim = { chieu_rong / 4, chieu_cao / 2 - 200, chieu_rong_chim, chieu_cao_chim };
+    float vi_tri_chim_y = chieu_cao / 2 - 200;
+    float van_toc = 0;
+    float goc_xoay = 0;
+
+    std::vector<ong> danh_sach_ong;
+    int dem_khung_hinh = 0;
+    int diem_so = 0;
+    int diem_cao_nhat = 0;
+    bool dang_chay = true;
+    bool ket_thuc_tro_choi = false;
+    bool tro_choi_bat_dau = false;
+    trang_thai_tro_choi trang_thai = menu;
+    int lua_chon_menu = 0;
+    std::vector<int> danh_sach_diem_cao;
+    doc_diem_cao(danh_sach_diem_cao, diem_cao_nhat);
+
+    SDL_Event su_kien;
+    int chuot_x = 0, chuot_y = 0;
+    bool nhan_chuot = false;
+
+    SDL_Rect vung_nut_tam_dung = { chieu_rong - 100, 20, 80, 30 };
+    SDL_Color mau_nut_tam_dung = { 255, 255, 255 };
+    SDL_Color mau_nut_tam_dung_highlight = { 255, 165, 0 };
+
+    while (dang_chay) {
+        while (SDL_PollEvent(&su_kien)) {
+            if (su_kien.type == SDL_QUIT)
+                dang_chay = false;
+
+            if (su_kien.type == SDL_MOUSEMOTION) {
+                SDL_GetMouseState(&chuot_x, &chuot_y);
+            }
+            if (su_kien.type == SDL_MOUSEBUTTONDOWN && su_kien.button.button == SDL_BUTTON_LEFT) {
+                nhan_chuot = true;
+            }
+
+            if (trang_thai == menu) {
+                if (su_kien.type == SDL_KEYDOWN) {
+                    if (su_kien.key.keysym.sym == SDLK_UP || su_kien.key.keysym.sym == SDLK_DOWN)
+                        lua_chon_menu = (lua_chon_menu + 1) % 4;
+                    if (su_kien.key.keysym.sym == SDLK_RETURN) {
+                        Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                        if (lua_chon_menu == 0) {
+                            trang_thai = dang_choi;
+                            vi_tri_chim_y = chieu_cao / 2 - 200;
+                            vung_chim.y = static_cast<int>(vi_tri_chim_y);
+                            van_toc = 0;
+                            danh_sach_ong.clear();
+                            diem_so = 0;
+                            dem_khung_hinh = 0;
+                            ket_thuc_tro_choi = false;
+                            tro_choi_bat_dau = false;
+                        }
+                        else if (lua_chon_menu == 1) {
+                            trang_thai = huong_dan;
+                        }
+                        else if (lua_chon_menu == 2) {
+                            trang_thai = diem_cao;
+                        }
+                        else {
+                            dang_chay = false;
+                        }
+                    }
+                }
+            }
+
+            else if (trang_thai == huong_dan) {
+                if (su_kien.type == SDL_KEYDOWN && su_kien.key.keysym.sym == SDLK_ESCAPE) {
+                    Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                    trang_thai = menu;
+                }
+            }
+
+            else if (trang_thai == dang_choi) {
+                if (!ket_thuc_tro_choi) {
+                    if (su_kien.type == SDL_KEYDOWN) {
+                        if (su_kien.key.keysym.sym == SDLK_SPACE) {
+                            if (!tro_choi_bat_dau) {
+                                tro_choi_bat_dau = true;
+                            }
+                            van_toc = luc_nhay;
+                            Mix_PlayChannel(-1, am_thanh_nhay, 0);
+                        }
+                        else if (su_kien.key.keysym.sym == SDLK_p) {
+                            if (tro_choi_bat_dau) {
+                                trang_thai = tam_dung;
+                                Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                            }
+                        }
+                    }
+                    if (chuot_tren_vung(vung_nut_tam_dung, chuot_x, chuot_y) && nhan_chuot) {
+                        if (tro_choi_bat_dau) {
+                            trang_thai = tam_dung;
+                            Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                        }
+                    }
+                }
+                if (ket_thuc_tro_choi && su_kien.type == SDL_KEYDOWN) {
+                    if (su_kien.key.keysym.sym == SDLK_RETURN) {
+                        Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                        vi_tri_chim_y = chieu_cao / 2 - 200;
+                        vung_chim.y = static_cast<int>(vi_tri_chim_y);
+                        van_toc = 0;
+                        danh_sach_ong.clear();
+                        diem_so = 0;
+                        dem_khung_hinh = 0;
+                        ket_thuc_tro_choi = false;
+                        tro_choi_bat_dau = false;
+                    }
+                    else if (su_kien.key.keysym.sym == SDLK_ESCAPE) {
+                        Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                        trang_thai = menu;
+                        vi_tri_chim_y = chieu_cao / 2 - 200;
+                        vung_chim.y = static_cast<int>(vi_tri_chim_y);
+                        van_toc = 0;
+                        danh_sach_ong.clear();
+                        diem_so = 0;
+                        dem_khung_hinh = 0;
+                        ket_thuc_tro_choi = false;
+                        tro_choi_bat_dau = false;
+                    }
+                }
+            }
+
+            else if (trang_thai == tam_dung) {
+                if (su_kien.type == SDL_KEYDOWN && su_kien.key.keysym.sym == SDLK_p) {
+                    Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                    trang_thai = dang_choi;
+                }
+            }
+
+            else if (trang_thai == diem_cao) {
+                if (su_kien.type == SDL_KEYDOWN && su_kien.key.keysym.sym == SDLK_ESCAPE) {
+                    Mix_PlayChannel(-1, am_thanh_nhan_nut, 0);
+                    trang_thai = menu;
+                }
+            }
+        }
+
+        if (trang_thai == dang_choi && !ket_thuc_tro_choi && tro_choi_bat_dau) {
+            van_toc += trong_luc;
+            vi_tri_chim_y += van_toc;
+            vung_chim.y = static_cast<int>(vi_tri_chim_y);
+           // goc_xoay = std::min(std::max(van_toc * 5, -30.0f), 90.0f);//
+
+            dem_khung_hinh++;
+            if (dem_khung_hinh >= khoang_cach_tao_ong) {
+                dem_khung_hinh = 0;
+                int vi_tri_khe_ho = rand() % (chieu_cao - chieu_cao_mat_dat - khoang_cach_ong - 100) + 50;
+                danh_sach_ong.push_back({ chieu_rong, vi_tri_khe_ho, false });
+            }
+
+            for (auto& ong : danh_sach_ong) {
+                ong.x -= toc_do_ong;
+                SDL_Rect ong_tren = { ong.x, 0, chieu_rong_ong, ong.vi_tri_khe_ho };
+                SDL_Rect ong_duoi = { ong.x, ong.vi_tri_khe_ho + khoang_cach_ong, chieu_rong_ong, chieu_cao - ong.vi_tri_khe_ho - khoang_cach_ong - chieu_cao_mat_dat };
+                if (!ong.da_vuot_qua && ong.x + chieu_rong_ong < vung_chim.x) {
+                    diem_so++;
+                    ong.da_vuot_qua = true;
+                    Mix_PlayChannel(-1, am_thanh_ghi_diem, 0);
+                }
+                if (kiem_tra_va_cham(vung_chim, ong_tren) || kiem_tra_va_cham(vung_chim, ong_duoi)) {
+                    ket_thuc_tro_choi = true;
+                    Mix_PlayChannel(-1, am_thanh_va_cham, 0);
+                    them_diem(danh_sach_diem_cao, diem_so, diem_cao_nhat);
+                    luu_diem_cao(danh_sach_diem_cao);
+                }
+            }
+
+            while (!danh_sach_ong.empty() && danh_sach_ong.front().x + chieu_rong_ong < 0)
+                danh_sach_ong.erase(danh_sach_ong.begin());
+
+            if (vi_tri_chim_y >= chieu_cao - chieu_cao_mat_dat - chieu_cao_chim || vi_tri_chim_y <= 0) {
+                ket_thuc_tro_choi = true;
+                Mix_PlayChannel(-1, am_thanh_va_cham, 0);
+                them_diem(danh_sach_diem_cao, diem_so, diem_cao_nhat);
+                luu_diem_cao(danh_sach_diem_cao);
+            }
+        }
+
+        SDL_RenderClear(renderer);
+
+        if (trang_thai == menu) {
+            SDL_RenderCopy(renderer, texture_nen_menu, nullptr, nullptr);
+            ve_menu(renderer, font, lua_chon_menu, chuot_x, chuot_y, nhan_chuot, dang_chay, trang_thai, am_thanh_nhan_nut);
+        }
+        else if (trang_thai == huong_dan) {
+            ve_huong_dan(renderer, font, texture_nen_huong_dan, chuot_x, chuot_y, nhan_chuot, trang_thai, am_thanh_nhan_nut);
+        }
+        else if (trang_thai == dang_choi) {
+            SDL_RenderCopy(renderer, texture_nen_tro_choi, nullptr, nullptr);
+            for (auto& ong : danh_sach_ong) {
+                SDL_Rect ong_tren = { ong.x, 0, chieu_rong_ong, ong.vi_tri_khe_ho };
+                SDL_Rect ong_duoi = { ong.x, ong.vi_tri_khe_ho + khoang_cach_ong, chieu_rong_ong, chieu_cao - ong.vi_tri_khe_ho - khoang_cach_ong - chieu_cao_mat_dat };
+                SDL_RenderCopyEx(renderer, texture_ong, nullptr, &ong_duoi, 0, nullptr, SDL_FLIP_NONE);
+                SDL_RenderCopyEx(renderer, texture_ong, nullptr, &ong_tren, 0, nullptr, SDL_FLIP_VERTICAL);
+            }
+            SDL_RenderCopyEx(renderer, texture_chim, nullptr, &vung_chim, goc_xoay, nullptr, SDL_FLIP_NONE);
+            ve_diem_so(renderer, font, diem_so, diem_cao_nhat);
+
+            if (!tro_choi_bat_dau) {
+                SDL_Color mau_trang = { 255, 255, 255 };
+                std::string thong_bao_bat_dau = "Press Space to Start";
+                SDL_Texture* texture_bat_dau = ve_van_ban(renderer, font, thong_bao_bat_dau, mau_trang);
+                int w, h;
+                SDL_QueryTexture(texture_bat_dau, nullptr, nullptr, &w, &h);
+                SDL_Rect vi_tri_bat_dau = { chieu_rong / 2 - w / 2, chieu_cao / 2 + 50, w, h };
+                SDL_RenderCopy(renderer, texture_bat_dau, nullptr, &vi_tri_bat_dau);
+                SDL_DestroyTexture(texture_bat_dau);
+            }
+
+            SDL_Color mau_hien_tai_nut_tam_dung = chuot_tren_vung(vung_nut_tam_dung, chuot_x, chuot_y) ? mau_nut_tam_dung_highlight : mau_nut_tam_dung;
+            SDL_Texture* texture_tam_dung = ve_van_ban(renderer, font, "", mau_hien_tai_nut_tam_dung);
+            int w, h;
+            SDL_QueryTexture(texture_tam_dung, nullptr, nullptr, &w, &h);
+            vung_nut_tam_dung.w = w;
+            vung_nut_tam_dung.h = h;
+            SDL_RenderCopy(renderer, texture_tam_dung, nullptr, &vung_nut_tam_dung);
+            SDL_DestroyTexture(texture_tam_dung);
+
+            if (ket_thuc_tro_choi) {
+                ve_ket_thuc_tro_choi(renderer, font, diem_so, chuot_x, chuot_y, nhan_chuot, trang_thai, ket_thuc_tro_choi, vi_tri_chim_y, van_toc, danh_sach_ong, dem_khung_hinh, texture_nen_ket_thuc, am_thanh_nhan_nut, tro_choi_bat_dau, vung_chim, diem_so);
+            }
+        }
+        else if (trang_thai == tam_dung) {
+            SDL_RenderCopy(renderer, texture_nen_tro_choi, nullptr, nullptr);
+            for (auto& ong : danh_sach_ong) {
+                SDL_Rect ong_tren = { ong.x, 0, chieu_rong_ong, ong.vi_tri_khe_ho };
+                SDL_Rect ong_duoi = { ong.x, ong.vi_tri_khe_ho + khoang_cach_ong, chieu_rong_ong, chieu_cao - ong.vi_tri_khe_ho - khoang_cach_ong - chieu_cao_mat_dat };
+                SDL_RenderCopyEx(renderer, texture_ong, nullptr, &ong_duoi, 0, nullptr, SDL_FLIP_NONE);
+                SDL_RenderCopyEx(renderer, texture_ong, nullptr, &ong_tren, 0, nullptr, SDL_FLIP_VERTICAL);
+            }
+            SDL_RenderCopyEx(renderer, texture_chim, nullptr, &vung_chim, goc_xoay, nullptr, SDL_FLIP_NONE);
+            ve_diem_so(renderer, font, diem_so, diem_cao_nhat);
+            ve_man_hinh_tam_dung(renderer, font, chuot_x, chuot_y, nhan_chuot, trang_thai, am_thanh_nhan_nut);
+        }
+        else if (trang_thai == diem_cao) {
+            ve_bang_diem_cao(renderer, font, danh_sach_diem_cao, texture_nen_diem_cao, chuot_x, chuot_y, nhan_chuot, trang_thai, am_thanh_nhan_nut);
+        }
+
+        SDL_RenderPresent(renderer);
+        SDL_Delay(1000 / 60);
+    }
+
+    SDL_DestroyTexture(texture_nen_tro_choi);
+    SDL_DestroyTexture(texture_nen_menu);
+    SDL_DestroyTexture(texture_nen_huong_dan);
+    SDL_DestroyTexture(texture_ong);
+    SDL_DestroyTexture(texture_chim);
+    SDL_DestroyTexture(texture_nen_diem_cao);
+    SDL_DestroyTexture(texture_nen_ket_thuc);
+    TTF_CloseFont(font);
+    Mix_FreeChunk(am_thanh_nhay);
+    Mix_FreeChunk(am_thanh_va_cham);
+    Mix_FreeChunk(am_thanh_ghi_diem);
+    Mix_FreeChunk(am_thanh_nhan_nut);
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(cua_so);
+
+    Mix_Quit();
+    TTF_Quit();
+    IMG_Quit();
+    SDL_Quit();
+
+    return 0;
+}
